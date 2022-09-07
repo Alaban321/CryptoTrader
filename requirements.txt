@@ -1,0 +1,10 @@
+cython
+cryptofeed
+order-book
+requests
+pyyaml
+fastapi
+pytest
+uvicorn[standard]
+numpy
+pyzmq

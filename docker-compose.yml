@@ -1,0 +1,11 @@
+version: '3'
+
+volumes:
+  crypto_trader_volume:
+    external: true
+
+services:
+  riskbot:
+    image: crypto_trader:latest
+    volumes:
+      - crypto_trader_volume:/crypto_trader/external
