@@ -8,3 +8,4 @@ pytest
 uvicorn[standard]
 numpy
 pyzmq
+numba
