@@ -9,15 +9,15 @@ from decimal import Decimal
 # import pickle
 # from pprint import pprint
 # import sys
-# import time
+import time
 # from multiprocessing import shared_memory
 import zmq
 import zmq.asyncio
 import asyncio
+import numpy as np
 
 from cryptofeed.backends.zmq import BookZMQ
 from order_book import SortedDict
-# from numba import jit
 from logger import get_logger
 
 LOG = get_logger()
@@ -59,7 +59,6 @@ class MarketFeedHandler:
         self.zmq_book_port = 5678
         self.socket = context.socket(zmq.PUB)
 
-
         # shared memory
         # self.shared_memory_book_size = 140# * 100
         # self.shm_bids = {}
@@ -68,21 +67,13 @@ class MarketFeedHandler:
         # time measurement
         self.measure_time = measure_time
         if self.measure_time:
+            self.book_updates = []
+            self.book_ts = 0
             self.book_process_time = []
             self.book_to_shared_memory_time = []
             self.count = 0
-            self.count_max = 5000
+            self.count_max = 100
 
-    # async def zmq_pub(self, ts):
-    #     # zmq
-    #     host = '127.0.0.1'
-    #     port = 5678
-    #     url = "tcp://{}:{}".format(host, port)
-    #     context = zmq.asyncio.Context.instance()
-    #     con = context.socket(zmq.PUB)
-    #     con.connect(url)
-    #     while self.running:
-    #         await con.send_string('Book event received on {}'.format(ts))
 
     def add_feed(self, exchange: str, symbols: list):
         # for symbol in symbols:
@@ -105,23 +96,36 @@ class MarketFeedHandler:
         LOG.info('{} - {} - bind zmq socket port {}'.format(self.name, self.id, self.zmq_book_port))
         self.socket.bind('tcp://127.0.0.1:{}'.format(self.zmq_book_port))
         self.heartbeat_task = self.loop.create_task(self.heartbeat())
-        # loop.create_task()
         self.fh.run(start_loop=False)
         LOG.info('{} {} - starting asyncio loop'.format(self.name, self.id))
         self.loop.run_forever()
-
 
     def stop(self):
         LOG.info('{} {} - entering stop()'.format(self.name, self.id))
         self.running = False
         self.loop.run_until_complete(self._cancel_running_task(self.heartbeat_task))
         self.socket.close()
-        LOG.info('{} {} - sopping feedhandler'.format(self.name, self.id))
+        LOG.info('{} {} - stopping feedhandler'.format(self.name, self.id))
         self.fh.stop()
 
     async def on_book(self, data, receipt_timestamp):
-        msg = 'received book event on {}'.format(receipt_timestamp)
-        await self.socket.send_string(msg)
+        self.count += 1
+        if self.book_ts > 0:
+            self.book_updates.append(data.timestamp - self.book_ts)
+        self.book_ts = data.timestamp
+        if self.count > self.count_max:
+            LOG.info('{} {} - resetting book latencies'.format(self.name, self.id))
+            latencies = np.array(self.book_updates)
+            mean = np.mean(latencies) * 1000
+            std = np.std(latencies) * 1000
+            LOG.info('{} {} - book  latencies mean {} ms std {} ms'.format(self.name, self.id, mean, std))
+            self.count = 0
+            self.book_updates = []
+        topic = data.symbol
+        now = time.time()
+        msg = 'sent time {}'.format(now)
+        await self.socket.send_string('{} {}'.format(topic, msg))
+        # await self.socket.send_string(msg)
         # LOG.info('{} {} - {}'.format(self.name, self.id, msg))
 
     async def heartbeat(self):
@@ -136,7 +140,6 @@ class MarketFeedHandler:
             await task
         except asyncio.CancelledError:
             LOG.info('{} {}: task {} is cancelled now'.format(self.name, self.id, task))
-
 
     # async def on_book(self, data, receipt_timestamp):
     #     if self.measure_time:
@@ -172,6 +175,7 @@ if __name__ == '__main__':
 
     config = {'uvloop': True, 'log': {'disabled': True}}
     market_data_handler = MarketFeedHandler(config, measure_time=True)
+    # symbols = ['BTC-USD-PERP', 'ETH-USD-PERP', 'SOL-USD-PERP']
     symbols = ['BTC-USD-PERP']
     market_data_handler.add_feed(exchange='FTX', symbols=symbols)
     market_data_handler.run()
